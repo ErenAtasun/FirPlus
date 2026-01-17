@@ -1,328 +1,171 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:hive_flutter/hive_flutter.dart';
-import '../models/user_profile.dart';
-import '../models/daily_log.dart';
-import '../models/meal_entry.dart';
-import '../models/weight_entry.dart';
-import '../core/constants/app_constants.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/user.dart';
+import '../models/daily_record.dart';
+import '../models/streak.dart';
+import '../models/meal.dart';
 
-/// Veritabanı servisi
-/// Hive ile tüm CRUD işlemlerini yönetir
+/// Service for handling local data storage using SharedPreferences
 class DatabaseService {
-  static DatabaseService? _instance;
-  static DatabaseService get instance => _instance ??= DatabaseService._();
+  static const String _userKey = 'user_data';
+  static const String _recordsKey = 'daily_records';
+  static const String _streakKey = 'streak_data';
 
-  DatabaseService._();
+  SharedPreferences? _prefs;
 
-  late Box<UserProfile> _userProfileBox;
-  late Box<DailyLog> _dailyLogBox;
-  late Box<MealEntry> _mealEntryBox;
-  late Box<WeightEntry> _weightEntryBox;
-
-  bool _isInitialized = false;
-
-  /// Veritabanını başlat
-  Future<void> initialize() async {
-    if (_isInitialized) return;
-
-    // Web'de main.dart'ta zaten başlatıldı, diğer platformlarda burada başlat
-    if (!kIsWeb) {
-      await Hive.initFlutter();
-    }
-
-    // Adapter'ları kaydet
-    if (!Hive.isAdapterRegistered(0)) {
-      Hive.registerAdapter(UserProfileAdapter());
-    }
-    if (!Hive.isAdapterRegistered(1)) {
-      Hive.registerAdapter(DailyLogAdapter());
-    }
-    if (!Hive.isAdapterRegistered(2)) {
-      Hive.registerAdapter(MealEntryAdapter());
-    }
-    if (!Hive.isAdapterRegistered(3)) {
-      Hive.registerAdapter(WeightEntryAdapter());
-    }
-
-    // Box'ları aç
-    _userProfileBox = await Hive.openBox<UserProfile>(AppConstants.userProfileBox);
-    _dailyLogBox = await Hive.openBox<DailyLog>(AppConstants.dailyLogBox);
-    _mealEntryBox = await Hive.openBox<MealEntry>(AppConstants.mealEntryBox);
-    _weightEntryBox = await Hive.openBox<WeightEntry>(AppConstants.weightEntryBox);
-
-    _isInitialized = true;
+  /// Initialize the database service
+  Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
   }
 
-  // ==================== USER PROFILE ====================
-
-  /// Kullanıcı profili var mı?
-  bool hasUserProfile() {
-    return _userProfileBox.isNotEmpty;
+  /// Ensure prefs is initialized
+  SharedPreferences get prefs {
+    if (_prefs == null) {
+      throw Exception('DatabaseService not initialized. Call init() first.');
+    }
+    return _prefs!;
   }
 
-  /// Kullanıcı profilini getir
-  UserProfile? getUserProfile() {
-    if (_userProfileBox.isEmpty) return null;
-    return _userProfileBox.values.first;
+  // ==================== User Operations ====================
+
+  /// Save user data
+  Future<void> saveUser(User user) async {
+    final jsonString = jsonEncode(user.toJson());
+    await prefs.setString(_userKey, jsonString);
   }
 
-  /// Kullanıcı profilini kaydet
-  Future<void> saveUserProfile(UserProfile profile) async {
-    await _userProfileBox.clear();
-    await _userProfileBox.put(profile.id, profile);
-  }
+  /// Get user data
+  User? getUser() {
+    final jsonString = prefs.getString(_userKey);
+    if (jsonString == null) return null;
 
-  /// Kullanıcı profilini güncelle
-  Future<void> updateUserProfile(UserProfile profile) async {
-    await _userProfileBox.put(profile.id, profile);
-  }
-
-  // ==================== DAILY LOG ====================
-
-  /// Belirli bir tarihin günlük kaydını getir
-  DailyLog? getDailyLog(DateTime date) {
-    final dateKey = _getDateKey(date);
     try {
-      return _dailyLogBox.values.firstWhere(
-        (log) => log.dateKey == dateKey,
+      final json = jsonDecode(jsonString) as Map<String, dynamic>;
+      return User.fromJson(json);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Check if user exists
+  bool hasUser() {
+    return prefs.containsKey(_userKey);
+  }
+
+  /// Delete user data
+  Future<void> deleteUser() async {
+    await prefs.remove(_userKey);
+  }
+
+  // ==================== Daily Records Operations ====================
+
+  /// Save all daily records
+  Future<void> saveRecords(List<DailyRecord> records) async {
+    final jsonList = records.map((r) => r.toJson()).toList();
+    final jsonString = jsonEncode(jsonList);
+    await prefs.setString(_recordsKey, jsonString);
+  }
+
+  /// Get all daily records
+  List<DailyRecord> getRecords() {
+    final jsonString = prefs.getString(_recordsKey);
+    if (jsonString == null) return [];
+
+    try {
+      final jsonList = jsonDecode(jsonString) as List<dynamic>;
+      return jsonList
+          .map((json) => DailyRecord.fromJson(json as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Get record for a specific date
+  DailyRecord? getRecordForDate(DateTime date) {
+    final records = getRecords();
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    try {
+      return records.firstWhere(
+        (r) => DateTime(r.date.year, r.date.month, r.date.day) == dateOnly,
       );
     } catch (e) {
       return null;
     }
   }
 
-  /// Bugünün günlük kaydını getir (yoksa oluştur)
-  Future<DailyLog> getOrCreateTodayLog(int targetCalories) async {
-    final today = DateTime.now();
-    DailyLog? log = getDailyLog(today);
+  /// Save or update a single record
+  Future<void> saveRecord(DailyRecord record) async {
+    final records = getRecords();
+    final dateOnly =
+        DateTime(record.date.year, record.date.month, record.date.day);
 
-    if (log == null) {
-      log = DailyLog(
-        id: _generateId(),
-        date: DateTime(today.year, today.month, today.day),
-        targetCalories: targetCalories,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-      await _dailyLogBox.put(log.id, log);
-    }
-
-    return log;
-  }
-
-  /// Günlük kaydı kaydet
-  Future<void> saveDailyLog(DailyLog log) async {
-    await _dailyLogBox.put(log.id, log);
-  }
-
-  /// Tarih aralığındaki günlük kayıtları getir
-  List<DailyLog> getDailyLogs({DateTime? startDate, DateTime? endDate}) {
-    var logs = _dailyLogBox.values.toList();
-
-    if (startDate != null) {
-      logs = logs.where((log) => !log.date.isBefore(startDate)).toList();
-    }
-    if (endDate != null) {
-      logs = logs.where((log) => !log.date.isAfter(endDate)).toList();
-    }
-
-    logs.sort((a, b) => a.date.compareTo(b.date));
-    return logs;
-  }
-
-  /// Ay için günlük kayıtları getir
-  List<DailyLog> getMonthLogs(int year, int month) {
-    return _dailyLogBox.values.where((log) {
-      return log.date.year == year && log.date.month == month;
-    }).toList();
-  }
-
-  // ==================== MEAL ENTRY ====================
-
-  /// Yemek girişi ekle
-  Future<MealEntry> addMealEntry(MealEntry entry) async {
-    await _mealEntryBox.put(entry.id, entry);
-
-    // Günlük kaydı güncelle
-    DailyLog? log = getDailyLog(
-      DateTime.parse(entry.dailyLogId.split('_').take(3).join('-')),
-    );
-    if (log == null) {
-      // dailyLogId'den tarihi çıkar
-      final parts = entry.dailyLogId.split('_');
-      if (parts.length >= 3) {
-        final profile = getUserProfile();
-        if (profile != null) {
-          log = await getOrCreateTodayLog(profile.targetCalories);
-        }
-      }
-    }
-
-    if (log != null) {
-      log.mealEntryIds.add(entry.id);
-      log.totalCalories += entry.calories;
-      log.updateStatus();
-      await saveDailyLog(log);
-    }
-
-    return entry;
-  }
-
-  /// Günlük kayda ait yemek girişlerini getir
-  List<MealEntry> getMealEntries(String dailyLogId) {
-    return _mealEntryBox.values
-        .where((entry) => entry.dailyLogId == dailyLogId)
-        .toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-  }
-
-  /// Yemek girişini güncelle
-  Future<void> updateMealEntry(MealEntry entry, int oldCalories) async {
-    await _mealEntryBox.put(entry.id, entry);
-
-    // Günlük kaydı güncelle
-    DailyLog? log;
-    try {
-      log = _dailyLogBox.values.firstWhere(
-        (l) => l.mealEntryIds.contains(entry.id),
-      );
-    } catch (e) {
-      log = null;
-    }
-
-    if (log != null) {
-      log.totalCalories = log.totalCalories - oldCalories + entry.calories;
-      log.updateStatus();
-      await saveDailyLog(log);
-    }
-  }
-
-  /// Yemek girişini sil
-  Future<void> deleteMealEntry(String entryId) async {
-    final entry = _mealEntryBox.get(entryId);
-    if (entry == null) return;
-
-    // Günlük kayıttan çıkar
-    DailyLog? log;
-    try {
-      log = _dailyLogBox.values.firstWhere(
-        (l) => l.mealEntryIds.contains(entryId),
-      );
-    } catch (e) {
-      log = null;
-    }
-
-    if (log != null) {
-      log.mealEntryIds.remove(entryId);
-      log.totalCalories -= entry.calories;
-      log.updateStatus();
-      await saveDailyLog(log);
-    }
-
-    await _mealEntryBox.delete(entryId);
-  }
-
-  /// Öğün türüne göre yemek girişlerini getir
-  List<MealEntry> getMealEntriesByType(String dailyLogId, String mealType) {
-    return getMealEntries(dailyLogId)
-        .where((entry) => entry.mealType == mealType)
-        .toList();
-  }
-
-  // ==================== WEIGHT ENTRY ====================
-
-  /// Kilo girişi ekle
-  Future<WeightEntry> addWeightEntry(WeightEntry entry) async {
-    await _weightEntryBox.put(entry.id, entry);
-    return entry;
-  }
-
-  /// Tüm kilo girişlerini getir (tarihe göre sıralı)
-  List<WeightEntry> getWeightEntries() {
-    final entries = _weightEntryBox.values.toList();
-    entries.sort((a, b) => a.date.compareTo(b.date));
-    return entries;
-  }
-
-  /// Son N kilo girişini getir
-  List<WeightEntry> getRecentWeightEntries(int count) {
-    final entries = getWeightEntries();
-    if (entries.length <= count) return entries;
-    return entries.sublist(entries.length - count);
-  }
-
-  /// Son kilo girişini getir
-  WeightEntry? getLatestWeightEntry() {
-    final entries = getWeightEntries();
-    if (entries.isEmpty) return null;
-    return entries.last;
-  }
-
-  /// Kilo girişini sil
-  Future<void> deleteWeightEntry(String entryId) async {
-    await _weightEntryBox.delete(entryId);
-  }
-
-  /// Kilo girişini güncelle
-  Future<void> updateWeightEntry(WeightEntry entry) async {
-    await _weightEntryBox.put(entry.id, entry);
-  }
-
-  // ==================== STATISTICS ====================
-
-  /// Haftalık istatistikleri getir
-  Map<String, dynamic> getWeeklyStats() {
-    final now = DateTime.now();
-    final weekStart = now.subtract(Duration(days: now.weekday - 1));
-    final logs = getDailyLogs(
-      startDate: weekStart,
-      endDate: now,
+    final existingIndex = records.indexWhere(
+      (r) => DateTime(r.date.year, r.date.month, r.date.day) == dateOnly,
     );
 
-    if (logs.isEmpty) {
-      return {
-        'averageCalories': 0,
-        'totalCalories': 0,
-        'daysLogged': 0,
-        'greenDays': 0,
-        'redDays': 0,
-      };
+    if (existingIndex >= 0) {
+      records[existingIndex] = record;
+    } else {
+      records.add(record);
     }
 
-    int totalCalories = 0;
-    int greenDays = 0;
-    int redDays = 0;
+    await saveRecords(records);
+  }
 
-    for (var log in logs) {
-      totalCalories += log.totalCalories;
-      if (log.status == 'GREEN') greenDays++;
-      if (log.status == 'RED') redDays++;
+  /// Add meal to a specific date
+  Future<DailyRecord> addMealToDate(DateTime date, Meal meal) async {
+    var record = getRecordForDate(date);
+
+    if (record == null) {
+      record = DailyRecord.empty(date);
     }
 
-    return {
-      'averageCalories': (totalCalories / logs.length).round(),
-      'totalCalories': totalCalories,
-      'daysLogged': logs.length,
-      'greenDays': greenDays,
-      'redDays': redDays,
-    };
+    final updatedMeals = [...record.meals, meal];
+    final updatedRecord = record.copyWith(meals: updatedMeals);
+
+    await saveRecord(updatedRecord);
+    return updatedRecord;
   }
 
-  // ==================== HELPERS ====================
+  /// Delete meal from a date
+  Future<DailyRecord?> deleteMealFromDate(DateTime date, String mealId) async {
+    var record = getRecordForDate(date);
+    if (record == null) return null;
 
-  String _getDateKey(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final updatedMeals = record.meals.where((m) => m.id != mealId).toList();
+    final updatedRecord = record.copyWith(meals: updatedMeals);
+
+    await saveRecord(updatedRecord);
+    return updatedRecord;
   }
 
-  String _generateId() {
-    return DateTime.now().millisecondsSinceEpoch.toString();
+  // ==================== Streak Operations ====================
+
+  /// Save streak data
+  Future<void> saveStreak(Streak streak) async {
+    final jsonString = jsonEncode(streak.toJson());
+    await prefs.setString(_streakKey, jsonString);
   }
 
-  /// Tüm verileri temizle (debug için)
-  Future<void> clearAllData() async {
-    await _userProfileBox.clear();
-    await _dailyLogBox.clear();
-    await _mealEntryBox.clear();
-    await _weightEntryBox.clear();
+  /// Get streak data
+  Streak getStreak() {
+    final jsonString = prefs.getString(_streakKey);
+    if (jsonString == null) return Streak();
+
+    try {
+      final json = jsonDecode(jsonString) as Map<String, dynamic>;
+      return Streak.fromJson(json);
+    } catch (e) {
+      return Streak();
+    }
+  }
+
+  // ==================== Utility Operations ====================
+
+  /// Clear all data
+  Future<void> clearAll() async {
+    await prefs.clear();
   }
 }

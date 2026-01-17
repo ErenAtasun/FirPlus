@@ -1,246 +1,427 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/constants/app_constants.dart';
-import '../../core/theme/app_theme.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../../providers/app_provider.dart';
-import '../../widgets/calorie_progress_card.dart';
-import '../../widgets/meal_section_card.dart';
+import '../../utils/theme.dart';
+import '../../widgets/calorie_progress_ring.dart';
+import '../../widgets/streak_flame_widget.dart';
+import '../../widgets/meal_card.dart';
+import '../meal/add_meal_screen.dart';
 
-/// Ana sayfa (Dashboard)
-/// Günlük kalori özeti, öğünler ve hızlı erişim
-class DashboardScreen extends StatelessWidget {
+/// Main dashboard screen
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  CalendarFormat _calendarFormat = CalendarFormat.week;
+  DateTime _focusedDay = DateTime.now();
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AppProvider>(
       builder: (context, provider, _) {
-        if (provider.isLoading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
+        final user = provider.user;
+        if (user == null) return const SizedBox();
+
+        final selectedRecord = provider.selectedDayRecord;
+        final meals = selectedRecord?.meals ?? [];
+        final totalCalories = selectedRecord?.totalCalories ?? 0;
+        final targetCalories = user.targetCalories.round();
 
         return Scaffold(
           body: SafeArea(
-            child: RefreshIndicator(
-              onRefresh: () => provider.refresh(),
-              child: CustomScrollView(
-                slivers: [
-                  // App Bar
-                  SliverAppBar(
-                    floating: true,
-                    title: Text(
-                      'Merhaba! 👋',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.calendar_month),
-                        onPressed: () {
-                          Navigator.of(context).pushNamed('/calendar');
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.settings),
-                        onPressed: () {
-                          Navigator.of(context).pushNamed('/settings');
-                        },
+            child: CustomScrollView(
+              slivers: [
+                // App Bar
+                SliverAppBar(
+                  floating: true,
+                  title: Row(
+                    children: [
+                      const Text('🔥'),
+                      const SizedBox(width: 8),
+                      Text(
+                        'DietTracker',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
                     ],
                   ),
+                  actions: [
+                    StreakFlameWidget(streak: provider.streak.currentStreak),
+                    const SizedBox(width: 16),
+                  ],
+                ),
 
-                  // Content
-                  SliverPadding(
-                    padding: const EdgeInsets.all(16),
-                    sliver: SliverList(
-                      delegate: SliverChildListDelegate([
-                        // Tarih gösterimi
-                        _buildDateHeader(context),
-                        const SizedBox(height: 20),
-
-                        // Kalori progress kartı
-                        CalorieProgressCard(
-                          targetCalories: provider.targetCalories,
-                          consumedCalories: provider.consumedCalories,
-                          remainingCalories: provider.remainingCalories,
+                // Calorie Progress
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: CalorieProgressRing(
+                            consumed: totalCalories,
+                            target: targetCalories,
+                          ),
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(width: 24),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildStatCard(
+                                'Hedef',
+                                '$targetCalories kcal',
+                                AppColors.primary,
+                              ),
+                              const SizedBox(height: 12),
+                              _buildStatCard(
+                                'Tüketilen',
+                                '$totalCalories kcal',
+                                AppColors.warning,
+                              ),
+                              const SizedBox(height: 12),
+                              _buildStatCard(
+                                'Kalan',
+                                '${targetCalories - totalCalories} kcal',
+                                totalCalories <= targetCalories
+                                    ? AppColors.success
+                                    : AppColors.error,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
 
-                        // Öğünler başlığı
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // Cheat Day Badge
+                if (provider.streak.availableCheatDays > 0)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color: AppColors.warning.withOpacity(0.3)),
+                        ),
+                        child: Row(
                           children: [
-                            Text(
-                              'Bugünün Öğünleri',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            TextButton.icon(
-                              onPressed: () {
-                                _showAddMealBottomSheet(context);
-                              },
-                              icon: const Icon(Icons.add, size: 20),
-                              label: const Text('Ekle'),
+                            const Text('⭐', style: TextStyle(fontSize: 24)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Kaçamak Hakkınız: ${provider.streak.availableCheatDays}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.warning,
+                                    ),
+                                  ),
+                                  Text(
+                                    '14 gün başarılı tamamladığınızda kazanırsınız',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 12),
+                      ),
+                    ),
+                  ),
 
-                        // Öğün kartları
-                        ...['kahvalti', 'ogle', 'aksam', 'ara'].map((mealType) {
-                          final meals = provider.getMealsByType(mealType);
-                          final totalCalories = provider.getCaloriesByMealType(mealType);
+                // Calendar
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.cardBackground,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.surfaceLight),
+                      ),
+                      child: TableCalendar(
+                        firstDay: DateTime.utc(2020, 1, 1),
+                        lastDay: DateTime.utc(2030, 12, 31),
+                        focusedDay: _focusedDay,
+                        selectedDayPredicate: (day) =>
+                            isSameDay(provider.selectedDate, day),
+                        calendarFormat: _calendarFormat,
+                        onFormatChanged: (format) {
+                          setState(() => _calendarFormat = format);
+                        },
+                        onDaySelected: (selectedDay, focusedDay) {
+                          provider.setSelectedDate(selectedDay);
+                          setState(() => _focusedDay = focusedDay);
+                        },
+                        calendarStyle: CalendarStyle(
+                          defaultTextStyle:
+                              const TextStyle(color: AppColors.textPrimary),
+                          weekendTextStyle:
+                              const TextStyle(color: AppColors.textSecondary),
+                          outsideTextStyle:
+                              const TextStyle(color: AppColors.textTertiary),
+                          selectedDecoration: const BoxDecoration(
+                            gradient: AppColors.primaryGradient,
+                            shape: BoxShape.circle,
+                          ),
+                          todayDecoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.3),
+                            shape: BoxShape.circle,
+                          ),
+                          markerDecoration: const BoxDecoration(
+                            color: AppColors.success,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        headerStyle: HeaderStyle(
+                          formatButtonVisible: true,
+                          formatButtonDecoration: BoxDecoration(
+                            border: Border.all(color: AppColors.primary),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          formatButtonTextStyle: const TextStyle(
+                            color: AppColors.primary,
+                          ),
+                          titleCentered: true,
+                          titleTextStyle: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          leftChevronIcon: const Icon(
+                            Icons.chevron_left,
+                            color: AppColors.textPrimary,
+                          ),
+                          rightChevronIcon: const Icon(
+                            Icons.chevron_right,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        calendarBuilders: CalendarBuilders(
+                          defaultBuilder: (context, day, focusedDay) {
+                            return _buildDayCell(context, day, provider);
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Selected Day Info
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _formatDate(provider.selectedDate),
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        Text(
+                          '${meals.length} öğün',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Meals List
+                if (meals.isEmpty)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.all(40),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.restaurant_menu,
+                            size: 64,
+                            color: AppColors.textTertiary,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Henüz öğün eklenmedi',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Aşağıdaki + butonuna tıklayarak\nöğün ekleyebilirsiniz',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: AppColors.textTertiary,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.all(20),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final meal = meals[index];
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 12),
-                            child: MealSectionCard(
-                              mealType: mealType,
-                              meals: meals,
-                              totalCalories: totalCalories,
-                              onAddPressed: () {
-                                Navigator.of(context).pushNamed(
-                                  '/add-meal',
-                                  arguments: {'mealType': mealType},
+                            child: MealCard(
+                              meal: meal,
+                              onDelete: () {
+                                provider.deleteMeal(
+                                  provider.selectedDate,
+                                  meal.id,
                                 );
-                              },
-                              onMealTap: (meal) {
-                                Navigator.of(context).pushNamed(
-                                  '/add-meal',
-                                  arguments: {'meal': meal},
-                                );
-                              },
-                              onMealDelete: (mealId) {
-                                _confirmDeleteMeal(context, provider, mealId);
                               },
                             ),
                           );
-                        }),
-
-                        const SizedBox(height: 80), // FAB için boşluk
-                      ]),
+                        },
+                        childCount: meals.length,
+                      ),
                     ),
                   ),
-                ],
-              ),
+
+                // Bottom padding
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: 100),
+                ),
+              ],
             ),
           ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () {
-              _showAddMealBottomSheet(context);
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AddMealScreen(date: provider.selectedDate),
+                ),
+              );
             },
             icon: const Icon(Icons.add),
-            label: const Text('Yemek Ekle'),
+            label: const Text('Öğün Ekle'),
           ),
+          floatingActionButtonLocation:
+              FloatingActionButtonLocation.centerFloat,
         );
       },
     );
   }
 
-  Widget _buildDateHeader(BuildContext context) {
-    final now = DateTime.now();
-    final dayNames = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
-    final monthNames = [
-      'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
-      'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
-    ];
-
-    return Text(
-      '${dayNames[now.weekday - 1]}, ${now.day} ${monthNames[now.month - 1]}',
-      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: Colors.grey.shade600,
-          ),
-    );
-  }
-
-  void _showAddMealBottomSheet(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Öğün Seçin',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            ...AppConstants.mealTypeLabels.entries.map((entry) {
-              return ListTile(
-                leading: Icon(
-                  _getMealIcon(entry.key),
-                  color: AppTheme.primaryColor,
-                ),
-                title: Text(entry.value),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.of(context).pushNamed(
-                    '/add-meal',
-                    arguments: {'mealType': entry.key},
-                  );
-                },
-              );
-            }),
-            const SizedBox(height: 16),
-          ],
-        ),
+  Widget _buildStatCard(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
       ),
-    );
-  }
-
-  IconData _getMealIcon(String mealType) {
-    switch (mealType) {
-      case 'kahvalti':
-        return Icons.free_breakfast;
-      case 'ogle':
-        return Icons.lunch_dining;
-      case 'aksam':
-        return Icons.dinner_dining;
-      case 'ara':
-        return Icons.cookie;
-      default:
-        return Icons.restaurant;
-    }
-  }
-
-  void _confirmDeleteMeal(BuildContext context, AppProvider provider, String mealId) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Yemeği Sil'),
-        content: const Text('Bu yemeği silmek istediğinizden emin misiniz?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('İptal'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
           ),
-          TextButton(
-            onPressed: () {
-              provider.deleteMeal(mealId);
-              Navigator.pop(context);
-            },
-            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
-            child: const Text('Sil'),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildDayCell(
+      BuildContext context, DateTime day, AppProvider provider) {
+    final status = provider.getDayStatus(day);
+    Color backgroundColor;
+    Color textColor = AppColors.textPrimary;
+
+    switch (status) {
+      case 'success':
+        backgroundColor = AppColors.daySuccess;
+        textColor = Colors.white;
+        break;
+      case 'exceeded':
+        backgroundColor = AppColors.dayExceeded;
+        textColor = Colors.white;
+        break;
+      case 'cheat':
+        backgroundColor = AppColors.dayCheat;
+        textColor = Colors.white;
+        break;
+      default:
+        backgroundColor = Colors.transparent;
+    }
+
+    return Container(
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        shape: BoxShape.circle,
+      ),
+      child: Center(
+        child: Text(
+          '${day.day}',
+          style: TextStyle(
+            color: textColor,
+            fontWeight: status != 'empty' ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    if (dateOnly == today) {
+      return 'Bugün';
+    } else if (dateOnly == yesterday) {
+      return 'Dün';
+    } else {
+      final months = [
+        '',
+        'Ocak',
+        'Şubat',
+        'Mart',
+        'Nisan',
+        'Mayıs',
+        'Haziran',
+        'Temmuz',
+        'Ağustos',
+        'Eylül',
+        'Ekim',
+        'Kasım',
+        'Aralık'
+      ];
+      return '${date.day} ${months[date.month]}';
+    }
   }
 }

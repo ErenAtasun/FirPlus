@@ -2,8 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/flutter_application_firplus.iml" filepath="$PROJECT_DIR$/flutter_application_firplus.iml" />
-      <module fileurl="file://$PROJECT_DIR$/android/flutter_application_firplus_android.iml" filepath="$PROJECT_DIR$/android/flutter_application_firplus_android.iml" />
+      <module fileurl="file://$PROJECT_DIR$/flutter_application_budgetheo.iml" filepath="$PROJECT_DIR$/flutter_application_budgetheo.iml" />
+      <module fileurl="file://$PROJECT_DIR$/android/flutter_application_budgetheo_android.iml" filepath="$PROJECT_DIR$/android/flutter_application_budgetheo_android.iml" />
     </modules>
   </component>
 </project>
